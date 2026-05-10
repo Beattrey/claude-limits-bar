@@ -10,6 +10,16 @@ A minimal VS Code extension that shows your Claude Code subscription rate-limit 
 
 Data comes from `GET https://api.anthropic.com/api/oauth/usage` using the OAuth token Claude Code stores in your macOS Keychain (`Claude Code-credentials`). Token is read fresh each poll, never written to disk by this extension.
 
+## Screenshots
+
+Status bar:
+
+![Status bar](assets/bar.png)
+
+Details panel (click the status-bar item):
+
+![Details panel](assets/details_page.png)
+
 ## Install (from source)
 
 ```bash
