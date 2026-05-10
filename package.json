@@ -6,6 +6,10 @@
   "publisher": "mykyta-tretiak",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Beattrey/claude-limits-bar.git"
+  },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],
