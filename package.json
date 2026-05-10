@@ -1,0 +1,53 @@
+{
+  "name": "claude-limits-bar",
+  "displayName": "Claude Limits Bar",
+  "description": "Show Claude Code subscription rate limits (5h / weekly / extra credits) in the VS Code status bar.",
+  "version": "0.1.0",
+  "publisher": "mykyta-tretiak",
+  "private": true,
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Claude Limits Bar",
+      "properties": {
+        "claudeLimitsBar.displayMode": {
+          "type": "string",
+          "enum": ["session", "weekly", "both"],
+          "default": "both",
+          "description": "Which rate limit(s) to show in the status bar."
+        },
+        "claudeLimitsBar.pollMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "How often (minutes) to poll the usage endpoint."
+        },
+        "claudeLimitsBar.showProgressBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a dot progress bar next to the percentage."
+        }
+      }
+    },
+    "commands": [
+      { "command": "claudeLimitsBar.refresh", "title": "Claude Limits: Refresh Now" },
+      { "command": "claudeLimitsBar.showDetails", "title": "Claude Limits: Show Details" },
+      { "command": "claudeLimitsBar.switchDisplayMode", "title": "Claude Limits: Switch Display Mode" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "tsc -p . && node --test 'out/**/*.test.js'",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
