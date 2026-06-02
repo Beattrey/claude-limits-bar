@@ -58,6 +58,9 @@ function render(): void {
     const weekly = cached.sevenDay ?? cached.sevenDaySonnet;
     if (weekly) pcts.push(weekly.pct);
   }
+  if (cached.extraCredits?.enabled && cached.extraCredits.pct != null) {
+    pcts.push(cached.extraCredits.pct);
+  }
   const max = pcts.length ? Math.max(...pcts) : 0;
   if (max >= 90) {
     statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
@@ -180,9 +183,21 @@ function renderPanelHtml(u: Usage): string {
         <div class="reset">resets ${escapeHtml(resetTxt)}</div>
       </div>`;
   };
-  const extra = u.extraCredits?.enabled && u.extraCredits.usedUsd != null && u.extraCredits.limitUsd != null
-    ? `<div class="row extra">Extra credits: $${u.extraCredits.usedUsd.toFixed(2)} / $${u.extraCredits.limitUsd} (${u.extraCredits.pct ?? 0}%)</div>`
-    : "";
+  const extra = (() => {
+    const ec = u.extraCredits;
+    if (!ec?.enabled || ec.pct == null) return "";
+    const color = ec.pct >= 90 ? "#e06c75" : ec.pct >= 70 ? "#e5c07b" : "#98c379";
+    const dollarStr = ec.usedUsd != null && ec.limitUsd != null
+      ? `$${ec.usedUsd.toFixed(2)} / $${ec.limitUsd}`
+      : "monthly";
+    return `
+      <div class="row">
+        <div class="label">Monthly credits</div>
+        <div class="bar"><div class="fill" style="width:${ec.pct}%; background:${color};"></div></div>
+        <div class="pct">${ec.pct}%</div>
+        <div class="reset">${escapeHtml(dollarStr)}</div>
+      </div>`;
+  })();
   return `<!doctype html>
 <html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
@@ -195,7 +210,7 @@ function renderPanelHtml(u: Usage): string {
   .fill { height: 100%; transition: width 0.3s; }
   .pct { text-align: right; font-variant-numeric: tabular-nums; }
   .reset { color: var(--vscode-descriptionForeground); font-size: 0.85em; }
-  .extra { grid-template-columns: 1fr; padding-top: 0.8em; border-top: 1px solid var(--vscode-panel-border); }
+
 </style>
 </head><body>
   <h1>Claude Limits</h1>

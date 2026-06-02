@@ -70,6 +70,13 @@ export function formatStatusBar(usage: Usage, opts: FormatOptions): string {
     const weekly = usage.sevenDay ?? usage.sevenDaySonnet;
     if (weekly) parts.push(formatBucket("W:", weekly, opts));
   }
+  if (usage.extraCredits?.enabled && usage.extraCredits.pct != null) {
+    const bar = opts.showBar ? ` ${formatBar(usage.extraCredits.pct)}` : "";
+    const dollars = usage.extraCredits.usedUsd != null && usage.extraCredits.limitUsd != null
+      ? ` · $${usage.extraCredits.usedUsd.toFixed(2)}/$${usage.extraCredits.limitUsd}`
+      : "";
+    parts.push(`M:${bar} ${usage.extraCredits.pct}%${dollars}`);
+  }
   if (parts.length === 0) return "$(check) Usage OK";
   return `$(pulse) ${parts.join("  ")}`;
 }
@@ -106,8 +113,8 @@ export function parseUsage(body: string): Usage {
   if (eu && typeof eu === "object") {
     out.extraCredits = {
       enabled: Boolean(eu.is_enabled),
-      usedUsd: typeof eu.used_credits === "number" ? eu.used_credits : undefined,
-      limitUsd: typeof eu.monthly_limit === "number" ? eu.monthly_limit : undefined,
+      usedUsd: typeof eu.used_credits === "number" ? eu.used_credits / 100 : undefined,
+      limitUsd: typeof eu.monthly_limit === "number" ? eu.monthly_limit / 100 : undefined,
       pct: pct(eu.utilization),
     };
   }

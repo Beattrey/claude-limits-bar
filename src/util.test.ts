@@ -45,9 +45,9 @@ test("parseUsage: missing fields are undefined", () => {
   assert.equal(usage.extraCredits, undefined);
 });
 
-test("parseUsage: extra_usage maps used_credits and monthly_limit", () => {
+test("parseUsage: extra_usage maps used_credits and monthly_limit (API returns cents)", () => {
   const usage = parseUsage(JSON.stringify({
-    extra_usage: { is_enabled: true, used_credits: 4.20, monthly_limit: 50, utilization: 8.4 },
+    extra_usage: { is_enabled: true, used_credits: 420, monthly_limit: 5000, utilization: 8.4 },
   }));
   assert.deepEqual(usage.extraCredits, { enabled: true, usedUsd: 4.20, limitUsd: 50, pct: 8 });
 });
@@ -149,4 +149,61 @@ test("formatStatusBar: weekly falls back to seven_day_sonnet when seven_day miss
 test("formatStatusBar: empty usage returns 'OK' marker", () => {
   const text = formatStatusBar({}, { mode: "both", showBar: false, nowSec: 0 });
   assert.equal(text, "$(check) Usage OK");
+});
+
+test("formatStatusBar: extra credits only → shows M: in status bar", () => {
+  const usage: import("./util.js").Usage = {
+    extraCredits: { enabled: true, pct: 42, usedUsd: 15.64, limitUsd: 500 },
+  };
+  const text = formatStatusBar(usage, { mode: "both", showBar: false, nowSec: 0 });
+  assert.equal(text, "$(pulse) M: 42% · $15.64/$500");
+});
+
+test("formatStatusBar: extra credits with bar and dollars", () => {
+  const usage: import("./util.js").Usage = {
+    extraCredits: { enabled: true, pct: 50, usedUsd: 250, limitUsd: 500 },
+  };
+  const text = formatStatusBar(usage, { mode: "both", showBar: true, nowSec: 0 });
+  assert.equal(text, "$(pulse) M: ●●●●●○○○○○ 50% · $250.00/$500");
+});
+
+test("formatStatusBar: extra credits without dollar amounts → shows pct only", () => {
+  const usage: import("./util.js").Usage = {
+    extraCredits: { enabled: true, pct: 42 },
+  };
+  const text = formatStatusBar(usage, { mode: "both", showBar: false, nowSec: 0 });
+  assert.equal(text, "$(pulse) M: 42%");
+});
+
+test("formatStatusBar: extra credits combined with session", () => {
+  const usage: import("./util.js").Usage = {
+    fiveHour: { pct: 20 },
+    extraCredits: { enabled: true, pct: 65, usedUsd: 325, limitUsd: 500 },
+  };
+  const text = formatStatusBar(usage, { mode: "session", showBar: false, nowSec: 0 });
+  assert.equal(text, "$(pulse) S: 20%  M: 65% · $325.00/$500");
+});
+
+test("formatStatusBar: extra credits disabled → not shown", () => {
+  const usage: import("./util.js").Usage = {
+    extraCredits: { enabled: false, pct: 42 },
+  };
+  const text = formatStatusBar(usage, { mode: "both", showBar: false, nowSec: 0 });
+  assert.equal(text, "$(check) Usage OK");
+});
+
+test("formatStatusBar: extra credits pct undefined → not shown", () => {
+  const usage: import("./util.js").Usage = {
+    extraCredits: { enabled: true },
+  };
+  const text = formatStatusBar(usage, { mode: "both", showBar: false, nowSec: 0 });
+  assert.equal(text, "$(check) Usage OK");
+});
+
+test("formatStatusBar: extra credits pct=0 → shows 0%", () => {
+  const usage: import("./util.js").Usage = {
+    extraCredits: { enabled: true, pct: 0 },
+  };
+  const text = formatStatusBar(usage, { mode: "both", showBar: false, nowSec: 0 });
+  assert.equal(text, "$(pulse) M: 0%");
 });
