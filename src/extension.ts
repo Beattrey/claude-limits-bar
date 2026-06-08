@@ -1,7 +1,14 @@
 import * as vscode from "vscode";
 import { readKeychainToken } from "./auth.js";
 import { fetchUsage, type FetchResult } from "./api.js";
-import { formatStatusBar, type DisplayMode, type Usage } from "./util.js";
+import {
+  formatStatusBar,
+  worstShownBucket,
+  resolveHighlight,
+  type DisplayMode,
+  type DismissState,
+  type Usage,
+} from "./util.js";
 
 const STATE_KEY_LAST_USAGE = "claudeLimitsBar.lastUsage";
 const STATE_KEY_LAST_TEXT = "claudeLimitsBar.lastGoodText";
@@ -14,6 +21,7 @@ let cached: Usage = {};
 let backoffUntil = 0;
 let authBlocked = false;
 let platformBlocked = false;
+let dismiss: DismissState | undefined;
 let ctx: vscode.ExtensionContext;
 
 const log = (msg: string) => {
@@ -51,24 +59,17 @@ function render(): void {
   const text = formatStatusBar(cached, { mode, showBar, nowSec: nowSec() });
   statusBar.text = text;
 
-  // Background color from worst percentage we are showing
-  const pcts: number[] = [];
-  if ((mode === "session" || mode === "both") && cached.fiveHour) pcts.push(cached.fiveHour.pct);
-  if (mode === "weekly" || mode === "both") {
-    const weekly = cached.sevenDay ?? cached.sevenDaySonnet;
-    if (weekly) pcts.push(weekly.pct);
-  }
-  if (cached.extraCredits?.enabled && cached.extraCredits.pct != null) {
-    pcts.push(cached.extraCredits.pct);
-  }
-  const max = pcts.length ? Math.max(...pcts) : 0;
-  if (max >= 90) {
-    statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
-  } else if (max >= 70) {
-    statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
-  } else {
-    statusBar.backgroundColor = undefined;
-  }
+  // Background color from the worst percentage we are showing — unless the user
+  // acknowledged it by opening the details panel (see acknowledgeHighlight).
+  const worst = worstShownBucket(cached, mode);
+  const resolved = resolveHighlight(worst?.pct ?? 0, dismiss, nowSec());
+  dismiss = resolved.dismiss;
+  statusBar.backgroundColor =
+    resolved.highlight === "error"
+      ? new vscode.ThemeColor("statusBarItem.errorBackground")
+      : resolved.highlight === "warning"
+        ? new vscode.ThemeColor("statusBarItem.warningBackground")
+        : undefined;
 
   statusBar.tooltip = buildTooltip();
   statusBar.show();
@@ -85,7 +86,7 @@ function buildTooltip(): string {
     lines.push(`${label}: ${b.pct}%${reset}`);
   };
   fmt("Session (5h)", cached.fiveHour);
-  fmt("Weekly Opus (7d)", cached.sevenDay);
+  fmt("Weekly (7d)", cached.sevenDay);
   fmt("Weekly Sonnet (7d)", cached.sevenDaySonnet);
   if (cached.extraCredits?.enabled && cached.extraCredits.usedUsd != null && cached.extraCredits.limitUsd != null) {
     lines.push(`Extra credits: $${cached.extraCredits.usedUsd.toFixed(2)} / $${cached.extraCredits.limitUsd} (${cached.extraCredits.pct ?? 0}%)`);
@@ -161,6 +162,7 @@ function stopPoll(): void {
 }
 
 function showDetailsPanel(): void {
+  acknowledgeHighlight();
   const panel = vscode.window.createWebviewPanel(
     "claudeLimitsBar.details",
     "Claude Limits",
@@ -168,6 +170,17 @@ function showDetailsPanel(): void {
     { enableScripts: false, retainContextWhenHidden: false }
   );
   panel.webview.html = renderPanelHtml(cached);
+}
+
+// Opening the details panel counts as "I've seen the warning": suppress the
+// status-bar highlight until the limit resets or usage climbs higher than now.
+function acknowledgeHighlight(): void {
+  const mode = getConfig<DisplayMode>("displayMode", "both");
+  const worst = worstShownBucket(cached, mode);
+  if (worst && worst.pct >= 70) {
+    dismiss = { pct: worst.pct, until: worst.resetsAt };
+    render();
+  }
 }
 
 function renderPanelHtml(u: Usage): string {
@@ -215,7 +228,7 @@ function renderPanelHtml(u: Usage): string {
 </head><body>
   <h1>Claude Limits</h1>
   ${row("Session (5h)", u.fiveHour)}
-  ${row("Weekly Opus (7d)", u.sevenDay)}
+  ${row("Weekly (7d)", u.sevenDay)}
   ${row("Weekly Sonnet (7d)", u.sevenDaySonnet)}
   ${extra}
 </body></html>`;
@@ -223,6 +236,24 @@ function renderPanelHtml(u: Usage): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+function alignment(): vscode.StatusBarAlignment {
+  return getConfig<string>("alignment", "right") === "left"
+    ? vscode.StatusBarAlignment.Left
+    : vscode.StatusBarAlignment.Right;
+}
+
+// (Re)create the status-bar item on the configured side. Alignment is fixed at
+// creation time, so changing the setting means disposing and rebuilding the item.
+function buildStatusBar(initialText?: string): void {
+  const previous: vscode.StatusBarItem | undefined = statusBar;
+  statusBar = vscode.window.createStatusBarItem(alignment(), 52);
+  statusBar.command = "claudeLimitsBar.showDetails";
+  ctx.subscriptions.push(statusBar);
+  if (initialText !== undefined) statusBar.text = initialText;
+  statusBar.show();
+  previous?.dispose();
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -234,11 +265,7 @@ export function activate(context: vscode.ExtensionContext): void {
   cached = context.globalState.get<Usage>(STATE_KEY_LAST_USAGE) ?? {};
   const lastText = context.globalState.get<string>(STATE_KEY_LAST_TEXT);
 
-  statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 52);
-  statusBar.command = "claudeLimitsBar.showDetails";
-  context.subscriptions.push(statusBar);
-  statusBar.text = lastText ?? "$(pulse) Claude: loading…";
-  statusBar.show();
+  buildStatusBar(lastText ?? "$(pulse) Claude: loading…");
 
   context.subscriptions.push(
     vscode.commands.registerCommand("claudeLimitsBar.refresh", async () => {
@@ -255,6 +282,13 @@ export function activate(context: vscode.ExtensionContext): void {
       const next: DisplayMode = cur === "session" ? "weekly" : cur === "weekly" ? "both" : "session";
       await cfg.update("displayMode", next, vscode.ConfigurationTarget.Global);
       vscode.window.setStatusBarMessage(`Claude Limits: showing ${next}`, 2500);
+      render();
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("claudeLimitsBar")) return;
+      if (e.affectsConfiguration("claudeLimitsBar.alignment")) {
+        buildStatusBar(statusBar.text);
+      }
       render();
     })
   );

@@ -34,6 +34,12 @@
           "type": "boolean",
           "default": true,
           "description": "Show a dot progress bar next to the percentage."
+        },
+        "claudeLimitsBar.alignment": {
+          "type": "string",
+          "enum": ["left", "right"],
+          "default": "right",
+          "description": "Which side of the status bar to show the indicator on. Changing this rebuilds the item immediately."
         }
       }
     },

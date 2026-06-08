@@ -81,6 +81,49 @@ export function formatStatusBar(usage: Usage, opts: FormatOptions): string {
   return `$(pulse) ${parts.join("  ")}`;
 }
 
+export type BarHighlight = "none" | "warning" | "error";
+
+// A user-acknowledged ("dismissed") highlight: suppress the status-bar color
+// until the window resets (`until`, epoch seconds) or usage climbs above `pct`.
+export type DismissState = { pct: number; until?: number };
+
+// The worst (highest-utilization) bucket currently shown for `mode`. Drives both
+// the status-bar background color and what opening the details panel acknowledges.
+export function worstShownBucket(usage: Usage, mode: DisplayMode): UsageBucket | undefined {
+  const candidates: UsageBucket[] = [];
+  if (mode === "session" || mode === "both") {
+    if (usage.fiveHour) candidates.push(usage.fiveHour);
+  }
+  if (mode === "weekly" || mode === "both") {
+    const weekly = usage.sevenDay ?? usage.sevenDaySonnet;
+    if (weekly) candidates.push(weekly);
+  }
+  if (usage.extraCredits?.enabled && usage.extraCredits.pct != null) {
+    candidates.push({ pct: usage.extraCredits.pct });
+  }
+  if (candidates.length === 0) return undefined;
+  return candidates.reduce((a, b) => (b.pct > a.pct ? b : a));
+}
+
+// Decide the status-bar background, honoring a dismiss the user set by opening
+// the details panel. The dismiss expires once its window resets or usage climbs
+// higher than when it was dismissed — so a worsening or fresh limit still lights
+// up. Returns the (possibly cleared) dismiss so the caller can persist it.
+export function resolveHighlight(
+  maxPct: number,
+  dismiss: DismissState | undefined,
+  nowSec: number,
+): { highlight: BarHighlight; dismiss: DismissState | undefined } {
+  let active = dismiss;
+  if (active && ((active.until != null && nowSec >= active.until) || maxPct > active.pct)) {
+    active = undefined;
+  }
+  if (active) return { highlight: "none", dismiss: active };
+  if (maxPct >= 90) return { highlight: "error", dismiss: undefined };
+  if (maxPct >= 70) return { highlight: "warning", dismiss: undefined };
+  return { highlight: "none", dismiss: undefined };
+}
+
 export function formatTimeRemaining(resetsAt: number, nowSec: number = Date.now() / 1000): string {
   const diff = Math.floor(resetsAt - nowSec);
   if (diff <= 0) return "soon";

@@ -207,3 +207,82 @@ test("formatStatusBar: extra credits pct=0 → shows 0%", () => {
   const text = formatStatusBar(usage, { mode: "both", showBar: false, nowSec: 0 });
   assert.equal(text, "$(pulse) M: 0%");
 });
+
+import { worstShownBucket, resolveHighlight } from "./util.js";
+
+test("worstShownBucket: 'both' picks the higher of session/weekly", () => {
+  const usage: import("./util.js").Usage = { fiveHour: { pct: 42 }, sevenDay: { pct: 88 } };
+  assert.equal(worstShownBucket(usage, "both")?.pct, 88);
+});
+
+test("worstShownBucket: 'session' ignores weekly", () => {
+  const usage: import("./util.js").Usage = { fiveHour: { pct: 42 }, sevenDay: { pct: 88 } };
+  assert.equal(worstShownBucket(usage, "session")?.pct, 42);
+});
+
+test("worstShownBucket: 'weekly' ignores session and falls back to sonnet", () => {
+  const usage: import("./util.js").Usage = { fiveHour: { pct: 99 }, sevenDaySonnet: { pct: 30 } };
+  assert.equal(worstShownBucket(usage, "weekly")?.pct, 30);
+});
+
+test("worstShownBucket: enabled extra credits counted in any mode", () => {
+  const usage: import("./util.js").Usage = { fiveHour: { pct: 10 }, extraCredits: { enabled: true, pct: 77 } };
+  assert.equal(worstShownBucket(usage, "both")?.pct, 77);
+});
+
+test("worstShownBucket: disabled extra credits ignored", () => {
+  const usage: import("./util.js").Usage = { extraCredits: { enabled: false, pct: 77 } };
+  assert.equal(worstShownBucket(usage, "both"), undefined);
+});
+
+test("worstShownBucket: empty usage → undefined", () => {
+  assert.equal(worstShownBucket({}, "both"), undefined);
+});
+
+test("worstShownBucket: carries resetsAt of the worst bucket", () => {
+  const usage: import("./util.js").Usage = {
+    fiveHour: { pct: 42, resetsAt: 111 },
+    sevenDay: { pct: 88, resetsAt: 222 },
+  };
+  assert.equal(worstShownBucket(usage, "both")?.resetsAt, 222);
+});
+
+test("resolveHighlight: thresholds none/warning/error", () => {
+  assert.equal(resolveHighlight(69, undefined, 0).highlight, "none");
+  assert.equal(resolveHighlight(70, undefined, 0).highlight, "warning");
+  assert.equal(resolveHighlight(89, undefined, 0).highlight, "warning");
+  assert.equal(resolveHighlight(90, undefined, 0).highlight, "error");
+});
+
+test("resolveHighlight: active dismiss suppresses the highlight", () => {
+  const r = resolveHighlight(95, { pct: 95, until: 1000 }, 500);
+  assert.equal(r.highlight, "none");
+  assert.deepEqual(r.dismiss, { pct: 95, until: 1000 });
+});
+
+test("resolveHighlight: dismiss cleared once usage climbs higher", () => {
+  const r = resolveHighlight(96, { pct: 95, until: 1000 }, 500);
+  assert.equal(r.highlight, "error");
+  assert.equal(r.dismiss, undefined);
+});
+
+test("resolveHighlight: equal usage keeps the dismiss", () => {
+  const r = resolveHighlight(95, { pct: 95, until: 1000 }, 500);
+  assert.equal(r.highlight, "none");
+  assert.deepEqual(r.dismiss, { pct: 95, until: 1000 });
+});
+
+test("resolveHighlight: dismiss expires when the window resets", () => {
+  const r = resolveHighlight(80, { pct: 95, until: 1000 }, 1000);
+  assert.equal(r.highlight, "warning");
+  assert.equal(r.dismiss, undefined);
+});
+
+test("resolveHighlight: dismiss without 'until' only clears on higher usage", () => {
+  const stay = resolveHighlight(80, { pct: 95 }, 9_999_999);
+  assert.equal(stay.highlight, "none");
+  assert.deepEqual(stay.dismiss, { pct: 95 });
+  const gone = resolveHighlight(96, { pct: 95 }, 9_999_999);
+  assert.equal(gone.highlight, "error");
+  assert.equal(gone.dismiss, undefined);
+});
