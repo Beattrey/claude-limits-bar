@@ -1,5 +1,11 @@
 import * as vscode from "vscode";
-import { readKeychainToken } from "./auth.js";
+import {
+  readKeychainToken,
+  resolveConfigDir,
+  profileLabel,
+  readAccountEmail,
+  type ConfigDirInfo,
+} from "./auth.js";
 import { fetchUsage, type FetchResult } from "./api.js";
 import {
   formatStatusBar,
@@ -23,6 +29,8 @@ let authBlocked = false;
 let platformBlocked = false;
 let dismiss: DismissState | undefined;
 let ctx: vscode.ExtensionContext;
+let currentInfo: ConfigDirInfo;
+let currentProfile: { label?: string; email?: string } = {};
 
 const log = (msg: string) => {
   const ts = new Date().toISOString().slice(11, 19);
@@ -31,6 +39,45 @@ const log = (msg: string) => {
 
 const getConfig = <T>(key: string, fallback: T): T =>
   vscode.workspace.getConfiguration("claudeLimitsBar").get<T>(key, fallback);
+
+// Resolve which Claude profile this window is bound to (config dir + Keychain
+// service) plus its display label/email. Does file I/O for the email — call on
+// fetch / config change / activation, never on the 30s render tick.
+function resolveProfile(): void {
+  // configDir is resource-scoped so it can be pinned in a folder's .vscode/settings.json
+  // even in multi-root workspaces. Read it against the workspace folder so folder-level
+  // settings actually apply.
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+  // Only honor the workspace-provided configDir when the workspace is TRUSTED: it
+  // selects the directory we read .credentials.json/.claude.json from, so an untrusted
+  // repo must not be able to redirect it. VS Code also enforces this declaratively via
+  // capabilities.untrustedWorkspaces.restrictedConfigurations in package.json.
+  const configDir = vscode.workspace.isTrusted
+    ? vscode.workspace.getConfiguration("claudeLimitsBar", folder).get<string>("configDir", "").trim()
+    : "";
+  currentInfo = resolveConfigDir(configDir || undefined);
+  currentProfile = { label: profileLabel(currentInfo), email: readAccountEmail(currentInfo) };
+}
+
+// Last-good cache is keyed by profile so windows on different accounts don't show
+// each other's numbers (globalState is shared across a profile's windows).
+const usageKey = (): string => `${STATE_KEY_LAST_USAGE}:${currentInfo.service}`;
+const textKey = (): string => `${STATE_KEY_LAST_TEXT}:${currentInfo.service}`;
+
+// One-line profile identity for tooltips.
+function profileSuffix(): string {
+  const who = currentProfile.email ?? currentInfo?.dir;
+  return `Profile: ${currentProfile.label ?? "default"}${who ? ` — ${who}` : ""}`;
+}
+
+// Append a compact profile tag to the status-bar text per `showProfileLabel`.
+function withProfileTag(base: string): string {
+  const mode = getConfig<string>("showProfileLabel", "auto");
+  let tag: string | undefined;
+  if (mode === "always") tag = currentProfile.label ?? "default";
+  else if (mode === "auto") tag = currentProfile.label;
+  return tag ? `${base}  $(account) ${tag}` : base;
+}
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -50,13 +97,14 @@ function render(): void {
 
   if (authBlocked) {
     statusBar.text = "$(warning) Claude: Auth expired";
-    statusBar.tooltip = "Click to retry — will re-read Keychain.";
+    statusBar.tooltip = `Click to retry — will re-read Keychain.\n${profileSuffix()}`;
     statusBar.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
     statusBar.show();
     return;
   }
 
-  const text = formatStatusBar(cached, { mode, showBar, nowSec: nowSec() });
+  const base = formatStatusBar(cached, { mode, showBar, nowSec: nowSec() });
+  const text = withProfileTag(base);
   statusBar.text = text;
 
   // Background color from the worst percentage we are showing — unless the user
@@ -74,12 +122,12 @@ function render(): void {
   statusBar.tooltip = buildTooltip();
   statusBar.show();
 
-  ctx.globalState.update(STATE_KEY_LAST_TEXT, text);
-  ctx.globalState.update(STATE_KEY_LAST_USAGE, cached);
+  ctx.globalState.update(textKey(), text);
+  ctx.globalState.update(usageKey(), cached);
 }
 
 function buildTooltip(): string {
-  const lines = ["Claude Limits", "─".repeat(20)];
+  const lines = ["Claude Limits", "─".repeat(20), profileSuffix(), ""];
   const fmt = (label: string, b: { pct: number; resetsAt?: number } | undefined) => {
     if (!b) return;
     const reset = b.resetsAt ? ` · resets ${new Date(b.resetsAt * 1000).toLocaleString()}` : "";
@@ -124,7 +172,9 @@ async function fetchOnce(): Promise<void> {
     log("still in backoff; skipping");
     return;
   }
-  const tok = readKeychainToken();
+  resolveProfile();
+  log(`profile: source=${currentInfo.source}, service='${currentInfo.service}', dir=${currentInfo.dir}`);
+  const tok = readKeychainToken(currentInfo);
   if (!tok.ok) {
     log(`Keychain read failed: ${tok.reason}`);
     if (tok.reason === "not-darwin") {
@@ -132,7 +182,7 @@ async function fetchOnce(): Promise<void> {
       stopPoll();
       render();
     } else if (tok.reason === "not-found") {
-      log("Keychain entry 'Claude Code-credentials' not found — sign in to Claude Code first via the CLI or VS Code extension.");
+      log(`Keychain entry '${currentInfo.service}' not found — sign in to Claude Code for config dir ${currentInfo.dir}.`);
       render();
     } else {
       // "denied" and other transient keychain failures: log only, keep last-good display, retry on next poll
@@ -260,10 +310,11 @@ export function activate(context: vscode.ExtensionContext): void {
   ctx = context;
   output = vscode.window.createOutputChannel("Claude Limits Bar");
   context.subscriptions.push(output);
-  log("activate v0.1.0");
+  log("activate v0.1.3");
 
-  cached = context.globalState.get<Usage>(STATE_KEY_LAST_USAGE) ?? {};
-  const lastText = context.globalState.get<string>(STATE_KEY_LAST_TEXT);
+  resolveProfile();
+  cached = context.globalState.get<Usage>(usageKey()) ?? {};
+  const lastText = context.globalState.get<string>(textKey());
 
   buildStatusBar(lastText ?? "$(pulse) Claude: loading…");
 
@@ -286,10 +337,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("claudeLimitsBar")) return;
+      if (e.affectsConfiguration("claudeLimitsBar.configDir")) {
+        // Profile changed — reset error state, swap to the new account's cached
+        // numbers so we don't flash the old account's figures, then re-read now.
+        authBlocked = false;
+        backoffUntil = 0;
+        platformBlocked = false;
+        stopPoll();
+        resolveProfile();
+        cached = ctx.globalState.get<Usage>(usageKey()) ?? {};
+        render();
+        fetchOnce().finally(() => scheduleNextPoll());
+        return;
+      }
       if (e.affectsConfiguration("claudeLimitsBar.alignment")) {
         buildStatusBar(statusBar.text);
       }
       render();
+    }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      // Trust just granted — a pinned configDir now applies; re-read the profile.
+      stopPoll();
+      fetchOnce().finally(() => scheduleNextPoll());
     })
   );
 
