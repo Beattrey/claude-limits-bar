@@ -2,7 +2,7 @@
   "name": "claude-limits-bar",
   "displayName": "Claude Limits Bar",
   "description": "Show Claude Code subscription rate limits (5h / weekly / extra credits) in the VS Code status bar.",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "publisher": "mykyta-tretiak",
   "private": true,
   "license": "MIT",
@@ -14,6 +14,13 @@
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In untrusted workspaces the claudeLimitsBar.configDir setting is ignored; the bar falls back to the CLAUDE_CONFIG_DIR environment variable or ~/.claude.",
+      "restrictedConfigurations": ["claudeLimitsBar.configDir"]
+    }
+  },
   "contributes": {
     "configuration": {
       "title": "Claude Limits Bar",
@@ -40,6 +47,24 @@
           "enum": ["left", "right"],
           "default": "right",
           "description": "Which side of the status bar to show the indicator on. Changing this rebuilds the item immediately."
+        },
+        "claudeLimitsBar.configDir": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "Claude Code config directory (profile/account) this window's bar should read — the value you set as `CLAUDE_CONFIG_DIR`. Supports `~`. Leave empty to follow the window's `CLAUDE_CONFIG_DIR`, then `~/.claude`. Pin it per-project in `.vscode/settings.json`, e.g. `~/.claude-personal`, so the right account shows even when VS Code was already running."
+        },
+        "claudeLimitsBar.showProfileLabel": {
+          "type": "string",
+          "enum": ["auto", "always", "never"],
+          "default": "auto",
+          "scope": "window",
+          "enumDescriptions": [
+            "Tag only non-default profiles",
+            "Always tag (default profile shows 'default')",
+            "Never show a tag"
+          ],
+          "description": "Show a short profile tag (e.g. 'personal') in the status bar so you can tell which account a window is showing."
         }
       }
     },
